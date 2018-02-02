@@ -30,7 +30,12 @@ func main() {
 
 	http.Handle("/", brokerAPI)
 
-	brokerLogger.Fatal("http-listen", http.ListenAndServe("localhost"+":"+"3000", nil))
+	var port string
+	if port = os.Getenv("PORT"); len(port) == 0 {
+		port = "8080"
+	}
+
+	brokerLogger.Fatal("http-listen", http.ListenAndServe(":"+port, nil))
 }
 
 func authenticate() *credhub.CredHub {

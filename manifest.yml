@@ -1,0 +1,11 @@
+applications:
+- name: credhub-broker
+  instances: 1
+  memory: 512M
+  disk_quota: 512M
+  random-route: true
+  env:
+    SKIP_TLS_VALIDATION: true
+    CREDHUB_SERVER: <CHANGE_ME>
+    CREDHUB_CLIENT: <CHANGE_ME>
+    CREDHUB_SECRET: <CHANGE_ME>

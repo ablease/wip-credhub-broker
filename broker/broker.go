@@ -3,12 +3,14 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"code.cloudfoundry.org/lager"
 	"github.com/cloudfoundry-incubator/credhub-cli/credhub"
 	"github.com/cloudfoundry-incubator/credhub-cli/credhub/credentials/values"
+	"github.com/cloudfoundry-incubator/credhub-cli/credhub/permissions"
 	"github.com/pivotal-cf/brokerapi"
 )
 
@@ -97,7 +99,27 @@ func (credhubServiceBroker *CredhubServiceBroker) Deprovision(context context.Co
 }
 
 func (credhubServiceBroker *CredhubServiceBroker) Bind(context context.Context, instanceID, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
+	var actor string
+	if details.AppGUID != "" {
+		actor = fmt.Sprintf("mtls-app:%s", details.AppGUID)
+		// } else if details.BindResource != nil && details.BindResource.CredentialClientID != "" {
+		// 	actor = fmt.Sprintf("uaa-client:%s", details.BindResource.CredentialClientID)
+	}
+
+	if actor == "" {
+		return brokerapi.Binding{}, errors.New("No app-guid or credential client ID were provided in the binding request, you must configure one of these")
+	}
+
+	additionalPermissions := []permissions.Permission{
+		{
+			Actor:      actor,
+			Operations: []string{"read"},
+		},
+	}
+
 	key := constructKey(details.ServiceID, instanceID)
+	credhubServiceBroker.CredHubClient.AddPermissions(key, additionalPermissions)
+
 	bindResponse := brokerapi.Binding{}
 	bindResponse.Credentials = map[string]string{"credhub-ref": key}
 	return bindResponse, nil

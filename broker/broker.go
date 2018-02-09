@@ -76,21 +76,13 @@ func (credhubServiceBroker *CredhubServiceBroker) Services(context context.Conte
 }
 
 func (credhubServiceBroker *CredhubServiceBroker) Provision(context context.Context, instanceID string, serviceDetails brokerapi.ProvisionDetails, asyncAllowed bool) (spec brokerapi.ProvisionedServiceSpec, err error) {
-	var credentials map[string]interface{}
-	err = json.Unmarshal(serviceDetails.RawParameters, &credentials)
-	if err != nil {
-		return spec, brokerapi.ErrRawParamsInvalid
-	}
-
-	key := constructKey(serviceDetails.ServiceID, instanceID)
-	_, err = credhubServiceBroker.CredHubClient.SetJSON(key, values.JSON(credentials), credhub.Mode("no-overwrite"))
+	err = credhubServiceBroker.setJSON(serviceDetails.RawParameters, instanceID, serviceDetails.ServiceID)
 
 	if err != nil {
-		credhubServiceBroker.Logger.Error("store user-provided credentials to credhub ", err, map[string]interface{}{"key": key})
-		return spec, brokerapi.NewFailureResponse(err, http.StatusInternalServerError, "unable to store the user-provided credentials")
+		return spec, err
 	}
 
-	credhubServiceBroker.Logger.Info("Successfully stored user-provided credentials for key " + key)
+	credhubServiceBroker.Logger.Info("successfully stored user-provided credentials for key " + instanceID)
 	return spec, nil
 }
 
@@ -102,8 +94,6 @@ func (credhubServiceBroker *CredhubServiceBroker) Bind(context context.Context, 
 	var actor string
 	if details.AppGUID != "" {
 		actor = fmt.Sprintf("mtls-app:%s", details.AppGUID)
-		// } else if details.BindResource != nil && details.BindResource.CredentialClientID != "" {
-		// 	actor = fmt.Sprintf("uaa-client:%s", details.BindResource.CredentialClientID)
 	}
 
 	if actor == "" {
@@ -129,6 +119,22 @@ func (credhubServiceBroker *CredhubServiceBroker) Unbind(context context.Context
 	return nil
 }
 
+// LastOperation ...
+func (credhubServiceBroker *CredhubServiceBroker) LastOperation(context context.Context, instanceID, operationData string) (brokerapi.LastOperation, error) {
+	return brokerapi.LastOperation{}, nil
+}
+
+func (credhubServiceBroker *CredhubServiceBroker) Update(context context.Context, instanceID string, serviceDetails brokerapi.UpdateDetails, asyncAllowed bool) (spec brokerapi.UpdateServiceSpec, err error) {
+	err = credhubServiceBroker.setJSON(serviceDetails.RawParameters, instanceID, serviceDetails.ServiceID)
+
+	if err != nil {
+		return spec, err
+	}
+
+	credhubServiceBroker.Logger.Info("successfully updated user-provided credentials for instance " + instanceID)
+	return spec, nil
+}
+
 func (credhubServiceBroker *CredhubServiceBroker) plans() map[string]*brokerapi.ServicePlan {
 	plans := map[string]*brokerapi.ServicePlan{}
 
@@ -149,15 +155,24 @@ func (credhubServiceBroker *CredhubServiceBroker) plans() map[string]*brokerapi.
 	return plans
 }
 
-// LastOperation ...
-func (credhubServiceBroker *CredhubServiceBroker) LastOperation(context context.Context, instanceID, operationData string) (brokerapi.LastOperation, error) {
-	return brokerapi.LastOperation{}, nil
-}
-
-func (credhubServiceBroker *CredhubServiceBroker) Update(context context.Context, instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool) (brokerapi.UpdateServiceSpec, error) {
-	return brokerapi.UpdateServiceSpec{}, nil
-}
-
 func constructKey(serviceID, instanceID string) string {
 	return fmt.Sprintf("/c/%s/%s/%s/credentials", BrokerID, serviceID, instanceID)
+}
+
+func (credhubServiceBroker *CredhubServiceBroker) setJSON(rawParameters json.RawMessage, instanceID string, serviceID string) (err error) {
+	var credentials map[string]interface{}
+	err = json.Unmarshal(rawParameters, &credentials)
+	if err != nil {
+		return brokerapi.ErrRawParamsInvalid
+	}
+
+	key := constructKey(serviceID, instanceID)
+	_, err = credhubServiceBroker.CredHubClient.SetJSON(key, values.JSON(credentials), credhub.Mode("overwrite"))
+
+	if err != nil {
+		credhubServiceBroker.Logger.Error("store user-provided credentials to credhub ", err, map[string]interface{}{"key": key})
+		return brokerapi.NewFailureResponse(err, http.StatusInternalServerError, "unable to store the user-provided credentials")
+	}
+
+	return nil
 }

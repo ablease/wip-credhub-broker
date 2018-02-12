@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	PlanNameSimple  = "simple"
-	PlanNameComplex = "complex"
-	BrokerID        = "sapi-credhub-broker"
+	PlanNameDefault = "default"
+	BrokerID        = "secure-credentials-broker"
+	ServiceID       = "secure-credentials"
 )
 
 type InstanceCredentials struct {
@@ -53,22 +53,20 @@ func (credhubServiceBroker *CredhubServiceBroker) Services(context context.Conte
 	}
 
 	return []brokerapi.Service{
-		brokerapi.Service{
-			ID:          BrokerID,
-			Name:        "awesome-credhub-broker",
-			Description: "stores binding config params in credhub",
-			Bindable:    true,
-			Plans:       planList,
+		brokerapi.Service{Name: ServiceID,
+			Description:   "Stores configuration parameters securely in CredHub",
+			Bindable:      true,
+			PlanUpdatable: false,
+			Plans:         planList,
 			Metadata: &brokerapi.ServiceMetadata{
 				DisplayName:         "credhub-broker",
-				LongDescription:     "stores binding config params in credhub",
-				DocumentationUrl:    "http://example.com",
+				LongDescription:     "Stores configuration parameters securely in CredHub",
+				DocumentationUrl:    "",
 				SupportUrl:          "",
 				ImageUrl:            "",
 				ProviderDisplayName: "",
 			},
 			Tags: []string{
-				"sapi",
 				"credhub",
 			},
 		},
@@ -76,7 +74,16 @@ func (credhubServiceBroker *CredhubServiceBroker) Services(context context.Conte
 }
 
 func (credhubServiceBroker *CredhubServiceBroker) Provision(context context.Context, instanceID string, serviceDetails brokerapi.ProvisionDetails, asyncAllowed bool) (spec brokerapi.ProvisionedServiceSpec, err error) {
-	err = credhubServiceBroker.setJSON(serviceDetails.RawParameters, instanceID, serviceDetails.ServiceID)
+	var credentials map[string]interface{}
+
+	err = json.Unmarshal(serviceDetails.RawParameters, &credentials)
+	if err != nil {
+		return spec, brokerapi.NewFailureResponse(
+			errors.New("Configuration parameters containing the credentials you wish to store in CredHub are needed to use this service"),
+			http.StatusUnprocessableEntity, "missing-parameters")
+	}
+
+	err = credhubServiceBroker.setJSON(credentials, instanceID, serviceDetails.ServiceID)
 
 	if err != nil {
 		return spec, err
@@ -87,19 +94,35 @@ func (credhubServiceBroker *CredhubServiceBroker) Provision(context context.Cont
 }
 
 func (credhubServiceBroker *CredhubServiceBroker) Deprovision(context context.Context, instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {
+	serviceInstanceKey := constructKey(details.ServiceID, instanceID)
+
+	err := credhubServiceBroker.CredHubClient.Delete(serviceInstanceKey)
+	if err != nil {
+		return brokerapi.DeprovisionServiceSpec{}, err
+	}
+
 	return brokerapi.DeprovisionServiceSpec{}, nil
 }
 
 func (credhubServiceBroker *CredhubServiceBroker) Bind(context context.Context, instanceID, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
-	var actor string
-	if details.AppGUID != "" {
-		actor = fmt.Sprintf("mtls-app:%s", details.AppGUID)
+	serviceKey := constructKey(details.ServiceID, instanceID)
+
+	credentialsJSON, err := credhubServiceBroker.CredHubClient.GetLatestJSON(serviceKey)
+	if err != nil {
+		return brokerapi.Binding{}, brokerapi.NewFailureResponse(
+			errors.New("Unable to retrieve service instance credentials from CredHub"),
+			http.StatusInternalServerError, "missing-service-instance-entry")
 	}
 
-	if actor == "" {
+	credhubServiceBroker.setJSON(credentialsJSON.Value, bindingID, details.ServiceID)
+	if err != nil {
+		return brokerapi.Binding{}, err
+	}
+
+	if details.AppGUID == "" {
 		return brokerapi.Binding{}, errors.New("No app-guid or credential client ID were provided in the binding request, you must configure one of these")
 	}
-
+	actor := fmt.Sprintf("mtls-app:%s", details.AppGUID)
 	additionalPermissions := []permissions.Permission{
 		{
 			Actor:      actor,
@@ -107,15 +130,23 @@ func (credhubServiceBroker *CredhubServiceBroker) Bind(context context.Context, 
 		},
 	}
 
-	key := constructKey(details.ServiceID, instanceID)
-	credhubServiceBroker.CredHubClient.AddPermissions(key, additionalPermissions)
+	bindingKey := constructKey(details.ServiceID, bindingID)
+	_, err = credhubServiceBroker.CredHubClient.AddPermissions(bindingKey, additionalPermissions)
+	if err != nil {
+		return brokerapi.Binding{}, err
+	}
 
-	bindResponse := brokerapi.Binding{}
-	bindResponse.Credentials = map[string]string{"credhub-ref": key}
-	return bindResponse, nil
+	return brokerapi.Binding{Credentials: map[string]string{"credhub-ref": bindingKey}}, nil
 }
 
 func (credhubServiceBroker *CredhubServiceBroker) Unbind(context context.Context, instanceID, bindingID string, details brokerapi.UnbindDetails) error {
+	bindingKey := constructKey(details.ServiceID, bindingID)
+
+	err := credhubServiceBroker.CredHubClient.Delete(bindingKey)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -125,30 +156,21 @@ func (credhubServiceBroker *CredhubServiceBroker) LastOperation(context context.
 }
 
 func (credhubServiceBroker *CredhubServiceBroker) Update(context context.Context, instanceID string, serviceDetails brokerapi.UpdateDetails, asyncAllowed bool) (spec brokerapi.UpdateServiceSpec, err error) {
-	err = credhubServiceBroker.setJSON(serviceDetails.RawParameters, instanceID, serviceDetails.ServiceID)
-
-	if err != nil {
-		return spec, err
-	}
-
-	credhubServiceBroker.Logger.Info("successfully updated user-provided credentials for instance " + instanceID)
-	return spec, nil
+	return spec, brokerapi.ErrPlanChangeNotSupported
 }
 
 func (credhubServiceBroker *CredhubServiceBroker) plans() map[string]*brokerapi.ServicePlan {
 	plans := map[string]*brokerapi.ServicePlan{}
 
-	plans["simple"] = &brokerapi.ServicePlan{
-		ID:          "simple-id",
-		Name:        "simple-plan",
-		Description: "This plan provides a single Redis process on a shared VM, which is suitable for development and testing workloads",
+	plans[PlanNameDefault] = &brokerapi.ServicePlan{
+		ID:          PlanNameDefault,
+		Name:        PlanNameDefault,
+		Description: "Stores configuration parameters securely in CredHub",
 		Metadata: &brokerapi.ServicePlanMetadata{
 			Bullets: []string{
-				"Each instance shares the same VM",
-				"Single dedicated Redis process",
-				"Suitable for development & testing workloads",
+				"Stores configuration parameters securely in CredHub",
 			},
-			DisplayName: "simple",
+			DisplayName: PlanNameDefault,
 		},
 	}
 
@@ -159,19 +181,14 @@ func constructKey(serviceID, instanceID string) string {
 	return fmt.Sprintf("/c/%s/%s/%s/credentials", BrokerID, serviceID, instanceID)
 }
 
-func (credhubServiceBroker *CredhubServiceBroker) setJSON(rawParameters json.RawMessage, instanceID string, serviceID string) (err error) {
-	var credentials map[string]interface{}
-	err = json.Unmarshal(rawParameters, &credentials)
-	if err != nil {
-		return brokerapi.ErrRawParamsInvalid
-	}
+func (credhubServiceBroker *CredhubServiceBroker) setJSON(credentials map[string]interface{}, instanceID string, serviceID string) (err error) {
 
 	key := constructKey(serviceID, instanceID)
-	_, err = credhubServiceBroker.CredHubClient.SetJSON(key, values.JSON(credentials), credhub.Mode("overwrite"))
+	_, err = credhubServiceBroker.CredHubClient.SetJSON(key, values.JSON(credentials), credhub.Mode("no-overwrite"))
 
 	if err != nil {
-		credhubServiceBroker.Logger.Error("store user-provided credentials to credhub ", err, map[string]interface{}{"key": key})
-		return brokerapi.NewFailureResponse(err, http.StatusInternalServerError, "unable to store the user-provided credentials")
+		credhubServiceBroker.Logger.Error("unable to store credentials to credhub ", err, map[string]interface{}{"key": key})
+		return brokerapi.NewFailureResponse(err, http.StatusInternalServerError, "Unable to store the provided credentials.")
 	}
 
 	return nil

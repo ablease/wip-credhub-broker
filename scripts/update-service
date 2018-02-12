@@ -2,7 +2,7 @@
 
 set -x
 
-curl http://admin:admin@localhost:8080/v2/service_instances/abcde12345?accepts_incomplete=true -d '{
+curl http://admin:admin@localhost:8080/v2/service_instances/abcd1234?accepts_incomplete=true -d '{
   "service_id": "simple-id",
   "plan_id": "simple-plan",
   "context": {
@@ -12,8 +12,8 @@ curl http://admin:admin@localhost:8080/v2/service_instances/abcde12345?accepts_i
   "organization_guid": "org-guid-here",
   "space_guid": "space-guid-here",
   "parameters": {
-    "username": "foo1",
-    "password": "bar1"
+    "username": "new-foo",
+    "password": "new-bar"
   }
-}' -X PUT -H "X-Broker-API-Version: 2.13" -H "Content-Type: application/json"
+}' -X PATCH -H "X-Broker-API-Version: 2.13" -H "Content-Type: application/json"
 

@@ -13,10 +13,10 @@ import (
 )
 
 func main() {
-	brokerLogger := lager.NewLogger("credhub-broker")
+	brokerLogger := lager.NewLogger("secure-credentials-broker")
 	brokerLogger.RegisterSink(lager.NewWriterSink(os.Stdout, lager.DEBUG))
 	brokerLogger.RegisterSink(lager.NewWriterSink(os.Stderr, lager.ERROR))
-	brokerLogger.Info("starting up the credhub broker...")
+	brokerLogger.Info("starting up the secure credentials broker...")
 
 	credHubClient := authenticate()
 	serviceBroker := &broker.CredhubServiceBroker{CredHubClient: credHubClient, Logger: brokerLogger}
@@ -50,6 +50,7 @@ func authenticate() *credhub.CredHub {
 		credhub.SkipTLSValidation(skipTLSValidation),
 		credhub.Auth(auth.UaaClientCredentials(os.Getenv("CREDHUB_CLIENT"), os.Getenv("CREDHUB_SECRET"))),
 	)
+
 	if err != nil {
 		panic("credhub client configured incorrectly: " + err.Error())
 	}

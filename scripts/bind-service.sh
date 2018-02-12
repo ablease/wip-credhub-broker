@@ -2,7 +2,7 @@
 
 set -x
 
-curl http://admin:admin@localhost:8080/v2/service_instances/abcde12345/service_bindings/some-binding-guid -d '{
+curl http://admin:admin@localhost:8080/v2/service_instances/abcdef123456/service_bindings/some-binding-guid-123 -d '{
   "service_id": "simple-id",
   "plan_id": "simple-plan",
   "context": {
